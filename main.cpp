@@ -7,6 +7,7 @@ const uint32_t g_StepSize = g_TransformSize / 2;
 
 #include <WITCH/A/A.h>
 #include <WITCH/FS/FS.h>
+#include <WITCH/IO/IO.h>
 #include <WITCH/IO/print.h>
 #include <WITCH/MATH/MATH.h>
 
@@ -20,6 +21,18 @@ void print(const char *format, ...){
   IO_vprint(&fd_stdout, format, argv);
   va_end(argv);
 }
+void read_stdin(void *Data, IO_size_t Size){
+  IO_fd_t fd;
+  IO_fd_set(&fd, FD_IN);
+  while(Size){
+    auto r = IO_read(&fd, Data, Size);
+    if(r < 0){
+      __abort();
+    }
+    Data = (void *)&((uint8_t *)Data)[r];
+    Size -= r;
+  }
+}
 
 #include <vector>
 #include <functional>
@@ -29,6 +42,7 @@ void print(const char *format, ...){
 #include "ganalyzer/ganalyzer.h"
 struct pile_t{
   ganalyzer_t<g_SampleType> ganalyzer{g_TransformSize};
+  bool infd = false;
   std::vector<std::string> InputFileNames;
   bool AnalyzeInput = false;
 
@@ -83,11 +97,22 @@ ProgramParameter_t ProgramParameters[] = {
     "h",
     [](uint32_t argCount, const char **arg){
       print("-h == prints this and exits program.\n");
+      print("-infd == get raw input from stdin fd\n");
       print("-i == input file name, <file/to/path ...>\n");
       print("-a == analyze input\n");
       print("-on == output note, <note index> <file/to/path>\n");
       print("-in == input note, <file/to/path>\n");
       PR_exit(0);
+    }
+  },
+  {
+    "infd",
+    [](uint32_t argCount, const char **arg){
+      if(argCount != 0){
+        print("parameter -infd cant take value.\n");
+        PR_exit(0);
+      }
+      pile.infd = true;
     }
   },
   {
@@ -150,6 +175,34 @@ void CallParameter(uint32_t ParameterAt, uint32_t iarg, const char **argv){
   ProgramParameters[is].func(iarg - ParameterAt - 1, &argv[ParameterAt + 1]);
 }
 
+void Analyze(g_SampleType *Samples, uint32_t SampleCount){
+  uint32_t TotalLines = SampleCount / g_TransformSize;
+
+  for(uint32_t y = 0; y < TotalLines; y++){
+    pile.ganalyzer.analyze(&Samples[y * g_TransformSize]);
+
+    if(pile.SaveNoteAt == pile.ganalyzer.get_AnalyzeCount()){
+      pile.ganalyzer.export_current_note(pile.SaveNoteTo);
+    }
+
+    if(pile.AnalyzeInput == true){
+      print(
+        "  continuity %lf size %u i %lu",
+        pile.ganalyzer.get_Continuity(),
+        pile.ganalyzer.get_NoteInfoCount(),
+        pile.ganalyzer.get_AnalyzeCount()
+      );
+      if(pile.ganalyzer.get_ImportedNoteCount()){
+        print(" ns");
+        for(uint32_t i = 0; i < pile.ganalyzer.get_ImportedNoteCount(); i++){
+          print(" %lf", pile.ganalyzer.get_SimilarityOfNote(i));
+        }
+      }
+      print("\n");
+    }
+  }
+}
+
 int main(int argc, const char **argv){
   if(argc <= 1){
     ProgramParameters[0].func(0, NULL);
@@ -186,23 +239,16 @@ int main(int argc, const char **argv){
         print("analyze for %s\n", pile.InputFileNames[iFile].c_str());
       }
 
-      uint32_t TotalLines = Samples.size() / g_TransformSize;
+      Analyze(&Samples[0], Samples.size());
+    }
 
-      for(uint32_t y = 0; y < TotalLines; y++){
-        pile.ganalyzer.analyze(&Samples[y * g_TransformSize]);
+    if(pile.infd){
+      while(1){
+        g_SampleType Samples[g_TransformSize];
 
-        if(pile.SaveNoteAt == pile.ganalyzer.get_AnalyzeCount()){
-          pile.ganalyzer.export_current_note(pile.SaveNoteTo);
-        }
+        read_stdin(Samples, g_TransformSize * sizeof(g_SampleType));
 
-        if(pile.AnalyzeInput == true){
-          print(
-            "  continuity %lf size %u i %lu\n",
-            pile.ganalyzer.get_Continuity(),
-            pile.ganalyzer.get_NoteInfoCount(),
-            pile.ganalyzer.get_AnalyzeCount()
-          );
-        }
+        Analyze(&Samples[0], g_TransformSize);
       }
     }
   }

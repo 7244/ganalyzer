@@ -1,6 +1,6 @@
 template <typename SampleType>
 struct ganalyzer_t{
-  private:
+  private: /* ------------------------------------------------------------------------------- */
 
   uint32_t WindowSize;
 
@@ -17,7 +17,11 @@ struct ganalyzer_t{
     };
     std::vector<info_t> infos;
   };
-  std::vector<note_t> imported_notes;
+  struct imported_note_t{
+    note_t note;
+    f32_t SimilarityToCurrent = 0;
+  };
+  std::vector<imported_note_t> imported_notes;
   note_t current_note;
 
   #include "Noise.h"
@@ -170,8 +174,14 @@ struct ganalyzer_t{
   uint32_t NoteInfoCount;
   uint32_t AnalyzeCount;
 
-  public:
+  public: /* -------------------------------------------------------------------------------- */
 
+  auto get_ImportedNoteCount(){
+    return imported_notes.size();
+  }
+  auto get_SimilarityOfNote(auto i){
+    return imported_notes[i].SimilarityToCurrent;
+  }
   auto get_Continuity(){
     return Continuity;
   }
@@ -228,8 +238,27 @@ struct ganalyzer_t{
 
     current_note = tnote;
 
-    Continuity = (f32_t)PastStartHit / tnote.infos.size();
     NoteInfoCount = tnote.infos.size();
+    if(NoteInfoCount){
+      Continuity = (f32_t)PastStartHit / tnote.infos.size();
+    }
+    else{
+      Continuity = 0;
+    }
+
+    for(uintptr_t i = 0; i < imported_notes.size(); i++){
+      note_t isnote = imported_notes[i].note; /* imported temp note */
+      auto oicount = isnote.infos.size(); /* old info count */
+      for(uintptr_t iInfo = 0; iInfo < current_note.infos.size(); iInfo++){
+        SubInfoFromNote(current_note.infos[iInfo], isnote);
+      }
+      if(oicount != 0){
+        imported_notes[i].SimilarityToCurrent = (f32_t)(oicount - isnote.infos.size()) / oicount;
+      }
+      else{
+        imported_notes[i].SimilarityToCurrent = 1;
+      }
+    }
 
     for(uintptr_t i = 0; i < tnote.infos.size(); i++){
       //print("  left %llf %llf\n", tnote.infos[i].at, tnote.infos[i].size);
@@ -270,7 +299,7 @@ struct ganalyzer_t{
       note_t note;
       note.infos.resize(s);
       f.read((char *)&note.infos[0], s * sizeof(note.infos[0]));
-      imported_notes.push_back(note);
+      imported_notes.push_back({.note = note});
     }
   }
 
