@@ -29,7 +29,7 @@ void print(const char *format, ...){
 #include "ganalyzer/ganalyzer.h"
 struct pile_t{
   ganalyzer_t<g_SampleType> ganalyzer{g_TransformSize};
-  std::string InputFileName;
+  std::vector<std::string> InputFileNames;
   bool AnalyzeInput = false;
 
   uint32_t SaveNoteAt = (uint32_t)-1;
@@ -38,8 +38,8 @@ struct pile_t{
 
 std::vector<g_SampleType> ReadSampleFile(const std::string FileName){
   FS_file_t file_input;
-  if(FS_file_open(pile.InputFileName.c_str(), &file_input, O_RDONLY) != 0){
-    print("failed to open sample file `%s`\n", pile.InputFileName.c_str());
+  if(FS_file_open(FileName.c_str(), &file_input, O_RDONLY) != 0){
+    print("failed to open sample file `%s`\n", FileName.c_str());
     PR_exit(0);
   }
 
@@ -83,7 +83,7 @@ ProgramParameter_t ProgramParameters[] = {
     "h",
     [](uint32_t argCount, const char **arg){
       print("-h == prints this and exits program.\n");
-      print("-i == input file name, <file/to/path>\n");
+      print("-i == input file name, <file/to/path ...>\n");
       print("-a == analyze input\n");
       print("-on == output note, <note index> <file/to/path>\n");
       print("-in == input note, <file/to/path>\n");
@@ -93,11 +93,13 @@ ProgramParameter_t ProgramParameters[] = {
   {
     "i",
     [](uint32_t argCount, const char **arg){
-      if(argCount != 1){
-        print("parameter -i needs 1 value.\n");
+      if(argCount == 0){
+        print("parameter -i needs value.\n");
         PR_exit(0);
       }
-      pile.InputFileName = arg[0];
+      for(uint32_t i = 0; i < argCount; i++){
+        pile.InputFileNames.push_back(arg[i]);
+      }
     }
   },
   {
@@ -177,22 +179,30 @@ int main(int argc, const char **argv){
   }
 
   if(pile.AnalyzeInput == true || pile.SaveNoteAt != (uint32_t)-1){
-    auto Samples = ReadSampleFile(pile.InputFileName);
-
-    uint32_t TotalLines = Samples.size() / g_TransformSize;
-
-    for(uint32_t y = 0; y < TotalLines; y++){
-      pile.ganalyzer.analyze(&Samples[y * g_TransformSize]);
-
-      if(pile.SaveNoteAt == pile.ganalyzer.get_AnalyzeCount()){
-        pile.ganalyzer.export_current_note(pile.SaveNoteTo);
-      }
+    for(uint32_t iFile = 0; iFile < pile.InputFileNames.size(); iFile++){
+      auto Samples = ReadSampleFile(pile.InputFileNames[iFile]);
 
       if(pile.AnalyzeInput == true){
-        print(
-          "continuity %lf size %u i %lu\n",
-          pile.ganalyzer.get_Continuity(), pile.ganalyzer.get_NoteInfoCount(), pile.ganalyzer.get_AnalyzeCount()
-        );
+        print("analyze for %s\n", pile.InputFileNames[iFile].c_str());
+      }
+
+      uint32_t TotalLines = Samples.size() / g_TransformSize;
+
+      for(uint32_t y = 0; y < TotalLines; y++){
+        pile.ganalyzer.analyze(&Samples[y * g_TransformSize]);
+
+        if(pile.SaveNoteAt == pile.ganalyzer.get_AnalyzeCount()){
+          pile.ganalyzer.export_current_note(pile.SaveNoteTo);
+        }
+
+        if(pile.AnalyzeInput == true){
+          print(
+            "  continuity %lf size %u i %lu\n",
+            pile.ganalyzer.get_Continuity(),
+            pile.ganalyzer.get_NoteInfoCount(),
+            pile.ganalyzer.get_AnalyzeCount()
+          );
+        }
       }
     }
   }
