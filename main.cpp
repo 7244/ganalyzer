@@ -42,12 +42,16 @@ void read_stdin(void *Data, IO_size_t Size){
 #include "ganalyzer/ganalyzer.h"
 struct pile_t{
   ganalyzer_t<g_SampleType> ganalyzer{g_TransformSize};
-  bool infd = false;
+  bool input_stdin = false;
   std::vector<std::string> InputFileNames;
   bool AnalyzeInput = false;
 
   uint32_t SaveNoteAt = (uint32_t)-1;
   std::string SaveNoteTo;
+
+  std::string OutputEveryNoteTo;
+
+  std::string inotes;
 }pile;
 
 std::vector<g_SampleType> ReadSampleFile(const std::string FileName){
@@ -97,22 +101,24 @@ ProgramParameter_t ProgramParameters[] = {
     "h",
     [](uint32_t argCount, const char **arg){
       print("-h == prints this and exits program.\n");
-      print("-infd == get raw input from stdin fd\n");
+      print("-stdin == get raw input from stdin\n");
       print("-i == input file name, <file/to/path ...>\n");
+      print("-inotes == input notes, <file/to/path>\n");
       print("-a == analyze input\n");
       print("-on == output note, <note index> <file/to/path>\n");
+      print("-oen == output every note, <file/to/path>\n");
       print("-in == input note, <file/to/path>\n");
       PR_exit(0);
     }
   },
   {
-    "infd",
+    "stdin",
     [](uint32_t argCount, const char **arg){
       if(argCount != 0){
-        print("parameter -infd cant take value.\n");
+        print("parameter -stdin cant take value.\n");
         PR_exit(0);
       }
-      pile.infd = true;
+      pile.input_stdin = true;
     }
   },
   {
@@ -125,6 +131,16 @@ ProgramParameter_t ProgramParameters[] = {
       for(uint32_t i = 0; i < argCount; i++){
         pile.InputFileNames.push_back(arg[i]);
       }
+    }
+  },
+  {
+    "inotes",
+    [](uint32_t argCount, const char **arg){
+      if(argCount != 1){
+        print("parameter -inotes needs a value.\n");
+        PR_exit(0);
+      }
+      pile.inotes = std::string(arg[0]);
     }
   },
   {
@@ -146,6 +162,16 @@ ProgramParameter_t ProgramParameters[] = {
       }
       pile.SaveNoteAt = std::atoi(arg[0]);
       pile.SaveNoteTo = std::string(arg[1]);
+    }
+  },
+  {
+    "oen",
+    [](uint32_t argCount, const char **arg){
+      if(argCount != 1){
+        print("-oen parameter needs to value.\n");
+        PR_exit(0);
+      }
+      pile.OutputEveryNoteTo = std::string(arg[0]);
     }
   },
   {
@@ -175,38 +201,66 @@ void CallParameter(uint32_t ParameterAt, uint32_t iarg, const char **argv){
   ProgramParameters[is].func(iarg - ParameterAt - 1, &argv[ParameterAt + 1]);
 }
 
-void Analyze(g_SampleType *Samples, uint32_t SampleCount){
+std::ofstream f_ecn;
+std::ofstream f_oent;
+
+void Analyze(){
+  if(pile.SaveNoteAt == pile.ganalyzer.get_AnalyzeCount()){
+    pile.ganalyzer.export_current_note(f_ecn);
+  }
+
+  if(f_oent){
+    pile.ganalyzer.export_current_note(f_oent);
+  }
+
+  if(pile.AnalyzeInput == true){
+    print(
+      "  continuity %lf size %u i %lu",
+      pile.ganalyzer.get_Continuity(),
+      pile.ganalyzer.get_NoteInfoCount(),
+      pile.ganalyzer.get_AnalyzeCount()
+    );
+    if(pile.ganalyzer.get_ImportedNoteCount()){
+      print(" ns");
+      for(uint32_t i = 0; i < pile.ganalyzer.get_ImportedNoteCount(); i++){
+        print(" %lf", pile.ganalyzer.get_SimilarityOfNote(i));
+      }
+      if(pile.ganalyzer.get_SimilarityOfNote(0) > 0.6){
+        print("\n a");
+      }
+    }
+    print("\n");
+  }
+}
+
+void AnalyzeSamples(g_SampleType *Samples, uint32_t SampleCount){
   uint32_t TotalLines = SampleCount / g_TransformSize;
 
   for(uint32_t y = 0; y < TotalLines; y++){
     pile.ganalyzer.analyze(&Samples[y * g_TransformSize]);
 
-    if(pile.SaveNoteAt == pile.ganalyzer.get_AnalyzeCount()){
-      pile.ganalyzer.export_current_note(pile.SaveNoteTo);
-    }
-
-    if(pile.AnalyzeInput == true){
-      print(
-        "  continuity %lf size %u i %lu",
-        pile.ganalyzer.get_Continuity(),
-        pile.ganalyzer.get_NoteInfoCount(),
-        pile.ganalyzer.get_AnalyzeCount()
-      );
-      if(pile.ganalyzer.get_ImportedNoteCount()){
-        print(" ns");
-        for(uint32_t i = 0; i < pile.ganalyzer.get_ImportedNoteCount(); i++){
-          print(" %lf", pile.ganalyzer.get_SimilarityOfNote(i));
-        }
-      }
-      print("\n");
-    }
+    Analyze();
   }
+}
+
+void sigint(int p){
+  exit(0);
 }
 
 int main(int argc, const char **argv){
   if(argc <= 1){
     ProgramParameters[0].func(0, NULL);
     return 1;
+  }
+
+  {
+    struct sigaction siga;
+
+    siga.sa_handler = sigint;
+    sigemptyset(&siga.sa_mask);
+    siga.sa_flags = 0;
+
+    sigaction(SIGINT, &siga, NULL);
   }
 
   {
@@ -231,6 +285,19 @@ int main(int argc, const char **argv){
     }
   }
 
+  if(pile.SaveNoteAt != (uint32_t)-1){
+    f_ecn.open(pile.SaveNoteTo, std::ofstream::binary);
+    if(!f_ecn){
+      __abort();
+    }
+  }
+  if(pile.OutputEveryNoteTo.size()){
+    f_oent.open(pile.OutputEveryNoteTo, std::ofstream::binary);
+    if(!f_oent){
+      __abort();
+    }
+  }
+
   if(pile.AnalyzeInput == true || pile.SaveNoteAt != (uint32_t)-1){
     for(uint32_t iFile = 0; iFile < pile.InputFileNames.size(); iFile++){
       auto Samples = ReadSampleFile(pile.InputFileNames[iFile]);
@@ -239,16 +306,27 @@ int main(int argc, const char **argv){
         print("analyze for %s\n", pile.InputFileNames[iFile].c_str());
       }
 
-      Analyze(&Samples[0], Samples.size());
+      AnalyzeSamples(&Samples[0], Samples.size());
     }
 
-    if(pile.infd){
+    if(pile.inotes.size()){
+      print("inotes:\n");
+      pile.ganalyzer.iterate_file_notes(pile.inotes,
+        [&](decltype(pile.ganalyzer)::note_t &note){
+          pile.ganalyzer.analyze_note(note);
+
+          Analyze();
+        }
+      );
+    }
+
+    if(pile.input_stdin){
       while(1){
         g_SampleType Samples[g_TransformSize];
 
         read_stdin(Samples, g_TransformSize * sizeof(g_SampleType));
 
-        Analyze(&Samples[0], g_TransformSize);
+        AnalyzeSamples(&Samples[0], g_TransformSize);
       }
     }
   }

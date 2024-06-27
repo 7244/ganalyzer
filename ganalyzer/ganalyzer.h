@@ -1,6 +1,5 @@
 template <typename SampleType>
 struct ganalyzer_t{
-  private: /* ------------------------------------------------------------------------------- */
 
   uint32_t WindowSize;
 
@@ -174,8 +173,6 @@ struct ganalyzer_t{
   uint32_t NoteInfoCount;
   uint32_t AnalyzeCount;
 
-  public: /* -------------------------------------------------------------------------------- */
-
   auto get_ImportedNoteCount(){
     return imported_notes.size();
   }
@@ -198,33 +195,7 @@ struct ganalyzer_t{
     AnalyzeCount = (decltype(AnalyzeCount))-1;
   }
 
-  void analyze(SampleType *Samples){
-    for(uint32_t x = 0; x < WindowSize; x++){
-      double multiplier = 0.5 * (1.0 - cos(2.0 * 3.14 * x / (WindowSize - 1)));
-      //double multiplier = 1;
-      fftw_in[x] = ((f64_t)Samples[x] / 0x7fff) * multiplier;
-    }
-
-    fftw_execute(fftw_p);
-
-    f64_t final[g_StepSize];
-    for(uint32_t x = 0; x < g_StepSize; x++){
-      f64_t power_in_db = 10 * log(fftw_out[x][0] * fftw_out[x][0] + fftw_out[x][1] * fftw_out[x][1]) / log(10);
-      ft[x] = power_in_db + 96;
-    }
-
-    Noise.analyze(ft);
-
-    note_t tnote; // transform note or temporar note
-    for(uintptr_t iStep = 0; iStep < g_StepSize / 16;){
-      if(DoesIStepHavePotential(iStep, tnote)){
-        iStep = analyze_in(ft, Noise, iStep, tnote);
-      }
-      else{
-        iStep++;
-      }
-    }
-
+  void analyze_note(note_t &tnote){
     uintptr_t PastStartHit = 0;
     {
       uintptr_t note_infos_size = current_note.infos.size();
@@ -260,31 +231,55 @@ struct ganalyzer_t{
       }
     }
 
+    AnalyzeCount++;
+  }
+
+  void analyze(SampleType *Samples){
+    for(uint32_t x = 0; x < WindowSize; x++){
+      double multiplier = 0.5 * (1.0 - cos(2.0 * 3.14 * x / (WindowSize - 1)));
+      //double multiplier = 1;
+      fftw_in[x] = ((f64_t)Samples[x] / 0x7fff) * multiplier;
+    }
+
+    fftw_execute(fftw_p);
+
+    f64_t final[g_StepSize];
+    for(uint32_t x = 0; x < g_StepSize; x++){
+      f64_t power_in_db = 10 * log(fftw_out[x][0] * fftw_out[x][0] + fftw_out[x][1] * fftw_out[x][1]) / log(10);
+      ft[x] = power_in_db + 96;
+    }
+
+    Noise.analyze(ft);
+
+    note_t tnote; // transform note or temporar note
+    for(uintptr_t iStep = 0; iStep < g_StepSize / 16;){
+      if(DoesIStepHavePotential(iStep, tnote)){
+        iStep = analyze_in(ft, Noise, iStep, tnote);
+      }
+      else{
+        iStep++;
+      }
+    }
+
+    analyze_note(tnote);
+
+    #if 0
     for(uintptr_t i = 0; i < tnote.infos.size(); i++){
-      //print("  left %llf %llf\n", tnote.infos[i].at, tnote.infos[i].size);
+      print("  left %llf %llf\n", tnote.infos[i].at, tnote.infos[i].size);
     }
 
     f32_t AllSum = 0;
     for(uintptr_t iStep = 0; iStep < g_StepSize / 16; iStep++){
       AllSum += ft[iStep];
     }
-    //print("ft sum %llf\n", AllSum);
-
-    AnalyzeCount++;
+    print("ft sum %llf\n", AllSum);
+    #endif
   }
 
-  void export_current_note(std::string FileName){
-    std::ofstream o(FileName);
-    if(!o){
-      print("note output file is failed to open `%s`\n", FileName.c_str());
-      PR_exit(0);
-    }
-
-    {
-      uint32_t s = current_note.infos.size();
-      o.write((const char *)&s, sizeof(s));
-      o.write((const char *)&current_note.infos[0], s * sizeof(current_note.infos[0]));
-    }
+  void export_current_note(std::ofstream &f){
+    uint32_t s = current_note.infos.size();
+    f.write((const char *)&s, sizeof(s));
+    f.write((const char *)&current_note.infos[0], s * sizeof(current_note.infos[0]));
   }
   void import_note(std::string FileName){
     std::ifstream f(FileName);
@@ -300,6 +295,17 @@ struct ganalyzer_t{
       note.infos.resize(s);
       f.read((char *)&note.infos[0], s * sizeof(note.infos[0]));
       imported_notes.push_back({.note = note});
+    }
+  }
+  void iterate_file_notes(std::string FileName, auto cb){
+    std::ifstream f(FileName);
+    while(f){
+      uint32_t s;
+      f.read((char *)&s, sizeof(s));
+      note_t note;
+      note.infos.resize(s);
+      f.read((char *)&note.infos[0], s * sizeof(note.infos[0]));
+      cb(note);
     }
   }
 
